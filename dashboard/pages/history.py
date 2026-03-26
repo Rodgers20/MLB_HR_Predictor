@@ -315,7 +315,7 @@ def _build_hr_showcase(df: pd.DataFrame):
 
         card = html.Div([
             html.Img(src=photo, alt=name, className="pick-card-photo",
-                     loading="lazy", style={"borderColor": "#10b981"}),
+                     style={"borderColor": "#10b981"}),
             html.P(name, className="pick-card-name"),
             html.P(team, className="pick-card-team"),
             html.Div(hr_label,

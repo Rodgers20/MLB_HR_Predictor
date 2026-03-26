@@ -92,8 +92,7 @@ def show_player(n_clicks, player_name):
     team_name = str(player.get("Team", "")) if "Team" in player else ""
 
     profile = html.Div([
-        html.Img(src=photo, alt=player_name, className="player-profile-photo",
-                 loading="lazy"),
+        html.Img(src=photo, alt=player_name, className="player-profile-photo"),
         html.Div([
             html.H3(player_name, className="player-profile-name"),
             html.Div(team_name, className="player-profile-meta"),

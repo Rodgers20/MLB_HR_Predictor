@@ -284,7 +284,6 @@ def _build_picks_grid(df: pd.DataFrame):
             html.Img(
                 src=photo, alt=name,
                 className="pick-card-photo",
-                loading="lazy",
                 style={"background": "#e2e8f0"},
             ),
             html.P(name, className="pick-card-name"),
