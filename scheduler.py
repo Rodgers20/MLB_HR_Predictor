@@ -49,6 +49,10 @@ def run_predictions():
     try:
         from utils.predictor import predict_today
         from tracker.prediction_tracker import save_predictions
+        from utils.roster_fetcher import refresh_rosters
+
+        # Refresh rosters every morning so team assignments are current
+        refresh_rosters(int(today[:4]))
 
         preds = predict_today(today)
         if preds.empty:

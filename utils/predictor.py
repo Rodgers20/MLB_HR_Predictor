@@ -31,6 +31,7 @@ from utils.feature_engineer import (
 )
 from utils.model_trainer import load_model
 from utils.weather_fetcher import fetch_all_game_weather
+from utils.roster_fetcher import get_current_roster_map
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,13 @@ def predict_today(game_date: str = None) -> pd.DataFrame:
     logger.info("Using player data year: %d", current_year)
     fg_batting, fg_pitching = _load_player_data(current_year)
 
+    # Live 2026 roster map: {player_name_lower: current_team_abbr}
+    # Used to (1) build correct batter pools when no lineup is confirmed,
+    # and (2) override stale FanGraphs team assignments in output.
+    game_season = int(game_date[:4])
+    roster_map  = get_current_roster_map(game_season)
+    logger.info("Loaded roster map: %d players for %d season", len(roster_map), game_season)
+
     # 3-year weighted batter features
     batter_weighted  = build_3yr_weighted_fg(fg_batting, current_year)
     pitcher_weighted = build_3yr_weighted_pitcher(fg_pitching, current_year)
@@ -203,13 +211,34 @@ def predict_today(game_date: str = None) -> pd.DataFrame:
             ] if pitcher_name and pitcher_name != "TBD" else pd.DataFrame()
             pitcher_series = pit_match.iloc[0] if not pit_match.empty else pd.Series()
 
-            # Batter pool: confirmed lineup or full team roster
+            # Batter pool: confirmed lineup > live roster > FanGraphs team fallback
             if batters:
+                # Lineup confirmed — match by name
                 batter_pool = fg_bat_cur[
                     fg_bat_cur["Name"].apply(
                         lambda n: any(b.lower() in str(n).lower() for b in batters)
                     )
                 ]
+            elif roster_map:
+                # Use live 2026 roster to find players currently on this team,
+                # then match those names against FanGraphs historical stats.
+                current_team_players = {
+                    name for name, abbr in roster_map.items()
+                    if abbr == batting_team
+                }
+                batter_pool = fg_bat_cur[
+                    fg_bat_cur["Name"].apply(
+                        lambda n: str(n).lower() in current_team_players
+                        or any(
+                            cp in str(n).lower() or str(n).lower() in cp
+                            for cp in current_team_players
+                            if len(cp) > 5  # skip very short names
+                        )
+                    )
+                ]
+                if batter_pool.empty:
+                    # Final fallback: old FanGraphs team column
+                    batter_pool = fg_bat_cur[fg_bat_cur["Team"] == batting_team]
             else:
                 batter_pool = fg_bat_cur[fg_bat_cur["Team"] == batting_team]
 
@@ -253,10 +282,17 @@ def predict_today(game_date: str = None) -> pd.DataFrame:
                     "Low"
                 )
 
+                player_name = batter_series.get("Name", "Unknown")
+                # Use live roster team; fall back to game schedule team
+                live_team = (
+                    roster_map.get(player_name.lower())
+                    or batting_team
+                )
+
                 predictions.append({
                     "date":          game_date,
-                    "player":        batter_series.get("Name", "Unknown"),
-                    "team":          batting_team,
+                    "player":        player_name,
+                    "team":          live_team,
                     "opponent":      fielding_team,
                     "pitcher":       pitcher_name,
                     "hr_probability": round(hr_prob, 4),
