@@ -23,6 +23,7 @@ PRED_COLUMNS = [
     "HR_Probability", "Confidence", "Park_Factor",
     "Temp_F", "Wind_Speed_MPH", "Wind_Direction", "Is_Indoor",
     "Home_Game", "Predicted_HRs", "Actual_HRs", "Hit",
+    "Insight_Text",
 ]
 PERF_COLUMNS = [
     "Date", "Total_Predictions", "High_Conf_Count",
@@ -31,7 +32,7 @@ PERF_COLUMNS = [
 ]
 
 WARN_THRESHOLD = 0.15   # red banner if High-conf hit rate < 15 %
-CONF_COLORS    = {"High": "#10b981", "Medium": "#f97316", "Low": "#94a3b8"}
+CONF_COLORS    = {"High": "#22c55e", "Medium": "#ff6b00", "Low": "#8e909c"}
 
 
 # ─── Layout ───────────────────────────────────────────────────────────────────
@@ -59,7 +60,7 @@ def layout():
                     html.H3("Rolling 7-Day Accuracy by Confidence Tier",
                             className="section-title"),
                     html.Span("Are predictions improving over time?",
-                              style={"fontSize": "12px", "color": "#94a3b8",
+                              style={"fontSize": "12px", "color": "#8e909c",
                                      "marginBottom": "10px", "display": "block"}),
                     dcc.Graph(id="rolling-accuracy-chart",
                               config={"displayModeBar": False}),
@@ -69,7 +70,7 @@ def layout():
                     html.H3("Confidence Calibration",
                             className="section-title"),
                     html.Span("High should beat Medium, Medium should beat Low",
-                              style={"fontSize": "12px", "color": "#94a3b8",
+                              style={"fontSize": "12px", "color": "#8e909c",
                                      "marginBottom": "10px", "display": "block"}),
                     dcc.Graph(id="calibration-chart",
                               config={"displayModeBar": False}),
@@ -95,7 +96,7 @@ def layout():
         html.Div([
             html.H3("Top Feature Importances (SHAP)", className="section-title"),
             html.Span("Which inputs drive the model's HR probability scores",
-                      style={"fontSize": "12px", "color": "#94a3b8",
+                      style={"fontSize": "12px", "color": "#8e909c",
                              "marginBottom": "10px", "display": "block"}),
             dcc.Graph(id="feature-importance-chart", config={"displayModeBar": False}),
         ], className="chart-section"),
@@ -121,7 +122,12 @@ def _load_predictions() -> pd.DataFrame:
     if not data:
         return pd.DataFrame(columns=PRED_COLUMNS)
 
-    df = pd.DataFrame(data, columns=PRED_COLUMNS)
+    row_len = len(data[0]) if data else 0
+    cols = PRED_COLUMNS[:row_len] if row_len <= len(PRED_COLUMNS) else PRED_COLUMNS
+    df = pd.DataFrame(data, columns=cols)
+    for missing in PRED_COLUMNS:
+        if missing not in df.columns:
+            df[missing] = ""
     df = df[df["Player"].notna()].copy()
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["HR_Probability"] = pd.to_numeric(df["HR_Probability"], errors="coerce")
@@ -130,6 +136,14 @@ def _load_predictions() -> pd.DataFrame:
 
     # Keep only rows with confirmed results
     df = df[df["Actual_HRs_num"].notna()].copy()
+
+    # Filter out predictions from the old uncalibrated model (probability > 21%).
+    # Those were generated before the dampening/cap fix and skew calibration charts.
+    # Stub rows (N/A confidence, prob = 0) are kept because they carry actual results.
+    model_rows = df[df["Confidence"] != "N/A"]
+    stub_rows  = df[df["Confidence"] == "N/A"]
+    model_rows = model_rows[model_rows["HR_Probability"] <= 0.21]
+    df = pd.concat([model_rows, stub_rows], ignore_index=True)
     return df
 
 
@@ -243,7 +257,7 @@ def _build_kpi_cards(preds: pd.DataFrame, perf_df: pd.DataFrame):
     if preds.empty:
         return [html.Div(
             "No resolved predictions yet — run the scheduler and wait for game results.",
-            style={"color": "#94a3b8", "padding": "20px", "fontStyle": "italic"},
+            style={"color": "#8e909c", "padding": "20px", "fontStyle": "italic"},
         )]
 
     total        = len(preds)
@@ -266,12 +280,12 @@ def _build_kpi_cards(preds: pd.DataFrame, perf_df: pd.DataFrame):
     def card(title, value, cls="", sub=""):
         return html.Div([
             html.Div(str(value), className="summary-card-value",
-                     style={"color": "#10b981" if cls == "green" else
+                     style={"color": "#22c55e" if cls == "green" else
                             "#ef4444" if cls == "red" else
-                            "#f59e0b" if cls == "amber" else
-                            "#1e40af"}),
+                            "#ff6b00" if cls == "amber" else
+                            "#60a5fa"}),
             html.Div(title, className="summary-card-label"),
-            html.Div(sub, style={"fontSize": "11px", "color": "#94a3b8",
+            html.Div(sub, style={"fontSize": "11px", "color": "#64748b",
                                  "marginTop": "3px"}) if sub else None,
         ], className=f"summary-card {cls}")
 
@@ -308,7 +322,7 @@ def _rolling_accuracy_chart(df: pd.DataFrame):
             continue
 
         # Rolling 7-day window (min 3 data points so early days aren't noisy)
-        sub = sub.set_index("Date").asfreq("D").fillna(method="ffill")
+        sub = sub.set_index("Date").asfreq("D").ffill()
         roll = sub["hit_rate"].rolling(7, min_periods=3).mean().reset_index()
         roll.columns = ["Date", "roll_rate"]
 
@@ -333,11 +347,10 @@ def _rolling_accuracy_chart(df: pd.DataFrame):
         annotation_position="bottom right",
         annotation_font={"color": "#ef4444", "size": 11},
     )
-    fig.update_layout(
-        **_chart_layout(h=300),
-        yaxis={"tickformat": ".0%", "title": "Hit Rate"},
-        xaxis={"title": "Date"},
-    )
+    layout = _chart_layout(h=300)
+    layout["yaxis"].update({"tickformat": ".0%", "title": "Hit Rate"})
+    layout["xaxis"].update({"title": "Date"})
+    fig.update_layout(**layout)
     return fig
 
 
@@ -346,6 +359,11 @@ def _rolling_accuracy_chart(df: pd.DataFrame):
 def _calibration_chart(df: pd.DataFrame):
     if df.empty:
         return _empty_fig("No resolved predictions yet")
+
+    # Exclude stub rows added for unmatched HR hitters (no model prediction)
+    df = df[df["Confidence"].isin(CONF_COLORS)].copy()
+    if df.empty:
+        return _empty_fig("No resolved model predictions yet")
 
     summary = (
         df.groupby("Confidence")
@@ -381,7 +399,12 @@ def _calibration_chart(df: pd.DataFrame):
     fig.add_trace(go.Bar(
         x=summary["Confidence"], y=summary["avg_prob"],
         name="Avg Predicted Prob",
-        marker_color=[c + "60" for c in summary["color"].tolist()],  # 38% opacity hex
+        marker_color=[
+            "rgba({},{},{},0.38)".format(int(c[1:3], 16), int(c[3:5], 16), int(c[5:7], 16))
+            if isinstance(c, str) and c.startswith("#") and len(c) >= 7
+            else "rgba(148,163,184,0.38)"
+            for c in summary["color"].tolist()
+        ],
         text=summary["avg_prob"].apply(lambda v: f"{v:.1%}"),
         textposition="outside",
         width=0.35,
@@ -394,20 +417,18 @@ def _calibration_chart(df: pd.DataFrame):
             x=row["Confidence"], y=-0.04,
             text=f"n={int(row['total'])}",
             showarrow=False, xref="x", yref="paper",
-            font={"size": 11, "color": "#94a3b8"},
+            font={"size": 11, "color": "#8e909c"},
         )
 
     fig.add_hline(
         y=WARN_THRESHOLD, line_dash="dot",
         line_color="#ef4444", line_width=1.5,
     )
-    fig.update_layout(
-        **_chart_layout(h=300),
-        barmode="overlay",
-        yaxis={"tickformat": ".0%", "title": "Rate", "range": [0, None]},
-        xaxis={"title": "Confidence Tier"},
-        legend={"orientation": "h", "y": -0.2},
-    )
+    layout = _chart_layout(h=300)
+    layout["yaxis"].update({"tickformat": ".0%", "title": "Rate", "range": [0, None]})
+    layout["xaxis"].update({"title": "Confidence Tier"})
+    layout["legend"].update({"orientation": "h", "y": -0.2})
+    fig.update_layout(**layout, barmode="overlay")
     return fig
 
 
@@ -422,8 +443,8 @@ def _accuracy_chart(df: pd.DataFrame):
     fig.add_trace(go.Scatter(
         x=df["Date"], y=df["Cumulative_Accuracy"],
         mode="lines", name="Cumulative",
-        line={"color": "#1e40af", "width": 2.5},
-        fill="tozeroy", fillcolor="rgba(30,64,175,.08)",
+        line={"color": "#3b82f6", "width": 2.5},
+        fill="tozeroy", fillcolor="rgba(59,130,246,.12)",
     ))
     fig.add_trace(go.Scatter(
         x=df["Date"], y=df["Daily_Accuracy"],
@@ -434,7 +455,9 @@ def _accuracy_chart(df: pd.DataFrame):
         y=WARN_THRESHOLD, line_dash="dot",
         line_color="#ef4444", line_width=1.5,
     )
-    fig.update_layout(**_chart_layout(), yaxis_tickformat=".1%", height=280)
+    layout = _chart_layout(h=280)
+    layout["yaxis"].update({"tickformat": ".1%"})
+    fig.update_layout(**layout)
     return fig
 
 
@@ -447,19 +470,21 @@ def _roi_chart(df: pd.DataFrame):
     df = df.sort_values("Date")
     cum_roi = df["ROI_Flat_Bet"].cumsum()
     final   = float(cum_roi.iloc[-1]) if len(cum_roi) else 0
-    color   = "#10b981" if final >= 0 else "#ef4444"
+    color   = "#22c55e" if final >= 0 else "#ef4444"
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=df["Date"], y=cum_roi,
         mode="lines+markers", fill="tozeroy",
         line={"color": color, "width": 2.5},
-        fillcolor=f"{'rgba(16,185,129,.1)' if final >= 0 else 'rgba(239,68,68,.1)'}",
+        fillcolor=f"{'rgba(34,197,94,.1)' if final >= 0 else 'rgba(239,68,68,.1)'}",
         name="Cumulative ROI",
         marker={"size": 5},
     ))
-    fig.add_hline(y=0, line_dash="dash", line_color="#94a3b8", line_width=1)
-    fig.update_layout(**_chart_layout(), yaxis_title="Units (u)", height=280)
+    fig.add_hline(y=0, line_dash="dash", line_color="#8e909c", line_width=1)
+    layout = _chart_layout(h=280)
+    layout["yaxis"].update({"title": "Units (u)"})
+    fig.update_layout(**layout)
     return fig
 
 
@@ -479,9 +504,9 @@ def _feature_importance_chart(df: pd.DataFrame):
     )
 
     colors = [
-        "#f59e0b" if s == latest["Importance_Score"].max()
-        else "#1e40af" if s >= latest["Importance_Score"].quantile(.75)
-        else "#60a5fa"
+        "#ff6b00" if s == latest["Importance_Score"].max()
+        else "#3b82f6" if s >= latest["Importance_Score"].quantile(.75)
+        else "#1e3566"
         for s in latest["Importance_Score"]
     ]
 
@@ -493,11 +518,9 @@ def _feature_importance_chart(df: pd.DataFrame):
         text=latest["Importance_Score"].apply(lambda v: f"{v:.3f}"),
         textposition="outside",
     ))
-    fig.update_layout(
-        **_chart_layout(h=420),
-        xaxis_title="SHAP Importance Score",
-        yaxis={"tickfont": {"size": 12}},
-    )
+    layout = _chart_layout(h=420)
+    layout["yaxis"].update({"tickfont": {"size": 12}})
+    fig.update_layout(**layout, xaxis_title="SHAP Importance Score")
     return fig
 
 
@@ -505,12 +528,17 @@ def _feature_importance_chart(df: pd.DataFrame):
 
 def _chart_layout(h: int = 280) -> dict:
     return {
-        "paper_bgcolor": "white",
-        "plot_bgcolor":  "#f8fafc",
+        "paper_bgcolor": "#151515",
+        "plot_bgcolor":  "#101416",
         "height":        h,
         "margin":        dict(l=60, r=30, t=10, b=50),
-        "legend":        {"orientation": "h", "y": -0.2},
-        "font":          {"family": "Inter, sans-serif", "size": 12},
+        "legend":        {"orientation": "h", "y": -0.2,
+                          "font": {"color": "#8e909c"}},
+        "font":          {"family": "Manrope, Inter, sans-serif", "size": 12, "color": "#f2f2f2"},
+        "xaxis":         {"gridcolor": "rgba(255,255,255,.06)", "color": "#8e909c",
+                          "zerolinecolor": "rgba(255,255,255,.06)"},
+        "yaxis":         {"gridcolor": "rgba(255,255,255,.06)", "color": "#8e909c",
+                          "zerolinecolor": "rgba(255,255,255,.06)"},
     }
 
 
@@ -519,10 +547,10 @@ def _empty_fig(msg: str):
     fig.add_annotation(
         text=msg, xref="paper", yref="paper",
         x=0.5, y=0.5, showarrow=False,
-        font={"size": 14, "color": "#94a3b8"},
+        font={"size": 14, "color": "#8e909c"},
     )
     fig.update_layout(
-        height=280, paper_bgcolor="white", plot_bgcolor="#f8fafc",
+        height=280, paper_bgcolor="#151515", plot_bgcolor="#101416",
         margin=dict(l=40, r=20, t=20, b=40),
     )
     return fig
