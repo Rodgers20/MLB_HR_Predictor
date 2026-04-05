@@ -84,12 +84,25 @@ def fetch_statcast_pitcher_leaderboard(year: int) -> pd.DataFrame:
 # FanGraphs season batting / pitching stats
 # ---------------------------------------------------------------------------
 
+def _invalidate_if_stale(path: Path, year: int) -> None:
+    """Delete a cached file if it's for the current season and older than today."""
+    from datetime import date as _date
+    from datetime import datetime as _dt
+    if year == _date.today().year and path.exists():
+        file_date = _dt.fromtimestamp(path.stat().st_mtime).date()
+        if file_date < _date.today():
+            logger.info("Stale current-season cache — refreshing %s", path.name)
+            path.unlink()
+
+
 def fetch_fangraphs_batting(year: int) -> pd.DataFrame:
     """
     FanGraphs season batting stats including ISO, Pull%, FB%, HR/FB, wRC+, WAR.
     Uses qual=0 to get all players (not just qualified).
+    Current-season cache is invalidated daily so stats stay up to date.
     """
     path = RAW_DIR / f"fangraphs_batting_{year}.csv"
+    _invalidate_if_stale(path, year)
     df = _load_or_fetch(path, batting_stats, year, year, qual=0)
     if df is not None:
         df["season"] = year
@@ -99,8 +112,10 @@ def fetch_fangraphs_batting(year: int) -> pd.DataFrame:
 def fetch_fangraphs_pitching(year: int) -> pd.DataFrame:
     """
     FanGraphs season pitching stats including FIP, xFIP, GB%, HR/9, HR/FB.
+    Current-season cache is invalidated daily so stats stay up to date.
     """
     path = RAW_DIR / f"fangraphs_pitching_{year}.csv"
+    _invalidate_if_stale(path, year)
     df = _load_or_fetch(path, pitching_stats, year, year, qual=0)
     if df is not None:
         df["season"] = year

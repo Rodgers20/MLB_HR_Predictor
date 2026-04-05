@@ -21,7 +21,7 @@ PRED_COLUMNS = [
     "Home_Game", "Predicted_HRs", "Actual_HRs", "Hit",
 ]
 
-CONF_COLORS = {"High": "#10b981", "Medium": "#f97316", "Low": "#94a3b8"}
+CONF_COLORS = {"High": "#22c55e", "Medium": "#ff6b00", "Low": "#8e909c"}
 
 
 # ─── Layout ───────────────────────────────────────────────────────────────────
@@ -86,11 +86,8 @@ def layout():
             html.Div([
                 html.H4("Prediction Log", style={"margin": 0}),
                 html.Span(id="hist-row-count",
-                          style={"fontSize": "12px", "color": "#94a3b8"}),
+                          style={"fontSize": "12px", "color": "#8e909c"}),
             ], className="table-title-bar"),
-
-            # Player cards for hits (above table)
-            html.Div(id="hist-hit-cards", style={"padding": "0 16px"}),
 
             dash_table.DataTable(
                 id="history-table",
@@ -103,9 +100,6 @@ def layout():
                     {"name": "HR Prob",    "id": "HR_Probability", "type": "numeric",
                      "format": {"specifier": ".1%"}},
                     {"name": "Confidence", "id": "Confidence"},
-                    {"name": "Park",       "id": "Park_Factor",    "type": "numeric"},
-                    {"name": "Temp °F",    "id": "Temp_F",         "type": "numeric"},
-                    {"name": "Wind",       "id": "Wind_Direction"},
                     {"name": "Actual HRs", "id": "HR_Result"},
                     {"name": "Outcome",    "id": "Outcome_Display"},
                 ],
@@ -116,47 +110,52 @@ def layout():
                 export_format="csv",
                 style_table={"overflowX": "auto"},
                 style_header={
-                    "backgroundColor": "#0d1b2a",
-                    "color": "white",
-                    "fontWeight": "600",
+                    "backgroundColor": "#1c1c1c",
+                    "color": "#f2f2f2",
+                    "fontWeight": "700",
                     "textAlign": "center",
                     "padding": "11px 10px",
                     "fontSize": "12px",
                     "letterSpacing": ".4px",
                     "textTransform": "uppercase",
-                    "borderBottom": "2px solid #f59e0b",
+                    "borderBottom": "2px solid #ff6b00",
+                    "border": "none",
                 },
                 style_cell={
                     "textAlign": "center",
                     "padding": "9px 12px",
-                    "fontFamily": "Inter, sans-serif",
+                    "fontFamily": "Manrope, Inter, sans-serif",
                     "fontSize": "13px",
-                    "border": "1px solid #f1f5f9",
-                    "color": "#1e293b",
+                    "backgroundColor": "#151515",
+                    "color": "#f2f2f2",
+                    "border": "1px solid rgba(255,255,255,.06)",
                 },
                 style_cell_conditional=[
-                    {"if": {"column_id": "Player"},   "textAlign": "left", "fontWeight": "600"},
-                    {"if": {"column_id": "Date"},     "width": "100px"},
-                    {"if": {"column_id": "Team"},     "width": "60px"},
-                    {"if": {"column_id": "Opponent"}, "width": "80px"},
+                    {"if": {"column_id": "Player"},         "textAlign": "left", "fontWeight": "600"},
+                    {"if": {"column_id": "Date"},           "width": "100px"},
+                    {"if": {"column_id": "Team"},           "width": "60px"},
+                    {"if": {"column_id": "Opponent"},       "width": "80px"},
+                    {"if": {"column_id": "HR_Result"},      "width": "90px", "fontWeight": "700"},
+                    {"if": {"column_id": "Outcome_Display"},"width": "130px"},
+                    {"if": {"column_id": "Confidence"},     "width": "90px"},
                 ],
                 style_data_conditional=[
                     # Confidence tiers
                     {"if": {"filter_query": '{Confidence} = "High"'},
-                     "backgroundColor": "#f0fdf4"},
+                     "backgroundColor": "rgba(34,197,94,.08)"},
                     {"if": {"filter_query": '{Confidence} = "Medium"'},
-                     "backgroundColor": "#fffbeb"},
+                     "backgroundColor": "rgba(255,107,0,.08)"},
                     # Outcome highlighting
-                    {"if": {"filter_query": '{Outcome_Display} = "✓ HR Hit"'},
-                     "backgroundColor": "#d1fae5", "color": "#065f46", "fontWeight": "700"},
+                    {"if": {"filter_query": '{Outcome_Display} contains "HR Hit"'},
+                     "backgroundColor": "rgba(34,197,94,.12)", "color": "#86efac", "fontWeight": "700"},
                     {"if": {"filter_query": '{Outcome_Display} contains "HR"',
                             "column_id": "HR_Result"},
-                     "fontWeight": "700", "color": "#065f46"},
+                     "fontWeight": "700", "color": "#86efac"},
                     {"if": {"filter_query": '{Outcome_Display} = "✗ No HR"'},
-                     "backgroundColor": "#fee2e2", "color": "#991b1b"},
+                     "backgroundColor": "rgba(239,68,68,.1)", "color": "#fca5a5"},
                     {"if": {"filter_query": '{Outcome_Display} = "⏳ Pending"'},
-                     "color": "#1e40af", "fontStyle": "italic"},
-                    {"if": {"row_index": "odd"}, "backgroundColor": "#f8fafc"},
+                     "color": "#93c5fd", "fontStyle": "italic"},
+                    {"if": {"row_index": "odd"}, "backgroundColor": "#101416"},
                 ],
             ),
         ], className="table-container"),
@@ -189,8 +188,15 @@ def _load_history() -> pd.DataFrame:
         wb.close()
         if not data:
             return pd.DataFrame(columns=PRED_COLUMNS)
+        # Trim/pad rows to match PRED_COLUMNS length so mismatched Excel columns don't fail
+        n = len(PRED_COLUMNS)
+        data = [row[:n] for row in data]
         df = pd.DataFrame(data, columns=PRED_COLUMNS)
-        return df[df["Player"].notna()]
+        # Only keep rows that are actual model predictions (have a valid HR_Probability)
+        df = df[df["Player"].notna()]
+        df["HR_Probability"] = pd.to_numeric(df["HR_Probability"], errors="coerce")
+        df = df[df["HR_Probability"].notna()]
+        return df
     except Exception:
         return pd.DataFrame(columns=PRED_COLUMNS)
 
@@ -201,6 +207,10 @@ def _is_pending(row) -> bool:
     hit    = row.get("Hit")
     return (actual is None or actual == "" or str(actual).strip() == "") and \
            (hit    is None or hit    == "" or str(hit).strip()    == "")
+
+
+SEASON_YEAR  = 2026
+SEASON_START = f"{SEASON_YEAR}-01-01"
 
 
 # ─── Callback ─────────────────────────────────────────────────────────────────
@@ -224,11 +234,11 @@ def update_history(_n, start_date, end_date, conf_filter, result_filter, player_
         return [], _empty_fig("No prediction history yet"), [], "", []
 
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce").dt.strftime("%Y-%m-%d")
-    df["HR_Probability"] = pd.to_numeric(df["HR_Probability"], errors="coerce")
 
     # ── Filters ───────────────────────────────────────────────────────────────
-    if start_date:
-        df = df[df["Date"] >= start_date]
+    # Default to current season when no date range is selected
+    effective_start = start_date if start_date else SEASON_START
+    df = df[df["Date"] >= effective_start]
     if end_date:
         df = df[df["Date"] <= end_date]
     if conf_filter != "All":
@@ -269,7 +279,7 @@ def update_history(_n, start_date, end_date, conf_filter, result_filter, player_
     # ── Table data ────────────────────────────────────────────────────────────
     table_cols = [
         "Date", "Player", "Team", "Opponent", "Pitcher",
-        "HR_Probability", "Confidence", "Park_Factor", "Temp_F", "Wind_Direction",
+        "HR_Probability", "Confidence",
         "HR_Result", "Outcome_Display",
     ]
     table_data = df[table_cols].to_dict("records")
@@ -279,8 +289,18 @@ def update_history(_n, start_date, end_date, conf_filter, result_filter, player_
 
     row_count = f"{len(df):,} rows"
 
-    # ── HR showcase (players who actually hit HRs) ────────────────────────────
-    hr_hitters = df[df["Actual_HRs_num"] > 0].sort_values("Actual_HRs_num", ascending=False)
+    # ── HR showcase (players who actually hit HRs — current season only) ────────
+    SEASON_YEAR = 2026
+    hr_hitters = df[df["Actual_HRs_num"] > 0].copy()
+    hr_hitters["_year"] = pd.to_datetime(hr_hitters["Date"], errors="coerce").dt.year
+    hr_hitters = hr_hitters[hr_hitters["_year"] == SEASON_YEAR]
+    # One card per player-game: keep highest Actual_HRs if multiple prediction rows share the same date
+    hr_hitters = (
+        hr_hitters
+        .sort_values("Actual_HRs_num", ascending=False)
+        .drop_duplicates(subset=["Player", "Date"], keep="first")
+        .sort_values("Actual_HRs_num", ascending=False)
+    )
     showcase = _build_hr_showcase(hr_hitters.head(12))
 
     return table_data, _monthly_chart(df), summary, row_count, showcase
@@ -315,15 +335,16 @@ def _build_hr_showcase(df: pd.DataFrame):
 
         card = html.Div([
             html.Img(src=photo, alt=name, className="pick-card-photo",
-                     style={"borderColor": "#10b981"}),
+                     style={"borderColor": "#22c55e"}),
             html.P(name, className="pick-card-name"),
             html.P(team, className="pick-card-team"),
             html.Div(hr_label,
-                     style={"fontFamily": "'Fira Code', monospace",
-                            "fontSize": "26px", "fontWeight": "600",
-                            "color": "#10b981", "margin": "4px 0"}),
+                     style={"fontFamily": "Manrope, sans-serif",
+                            "fontSize": "26px", "fontWeight": "800",
+                            "color": "#86efac", "margin": "4px 0",
+                            "textShadow": "0 0 12px rgba(34,197,94,.4)"}),
             html.P(f"Predicted: {prob:.1%}", className="pick-card-matchup"),
-            html.P(date_s, style={"fontSize": "11px", "color": "#94a3b8", "margin": "2px 0"}),
+            html.P(date_s, style={"fontSize": "11px", "color": "#64748b", "margin": "2px 0"}),
             html.Span("✓ Confirmed", className="badge badge-hit",
                       style={"marginTop": "6px"}),
         ], className="pick-card high")
@@ -341,20 +362,26 @@ def _build_summary(df: pd.DataFrame):
     hits     = int((df["Actual_HRs_num"] > 0).sum()) if resolved > 0 else 0
     hit_rate = hits / resolved if resolved > 0 else 0
 
+    # High-confidence accuracy
+    high_df   = df[(df["Confidence"] == "High") & (~df["_pending"])]
+    high_hits = int((high_df["Actual_HRs_num"] > 0).sum()) if not high_df.empty else 0
+    high_rate = high_hits / len(high_df) if not high_df.empty else 0
+
     def card(title, value, cls=""):
         return html.Div([
             html.Div(str(value), className="summary-card-value",
-                     style={"color": "#10b981" if cls == "green" else
-                            "#1e40af" if cls == "blue" else
-                            "#f59e0b" if cls == "amber" else
-                            "#f97316"}),
+                     style={"color": "#22c55e" if cls == "green" else
+                            "#60a5fa" if cls == "blue" else
+                            "#ff6b00" if cls == "amber" else
+                            "#ff6b00"}),
             html.Div(title, className="summary-card-label"),
         ], className=f"summary-card {cls}")
 
     return [
         card("Total Predictions", total),
         card("HR Hits", hits, "green"),
-        card("Hit Rate", f"{hit_rate:.1%}", "amber"),
+        card("Overall Hit Rate", f"{hit_rate:.1%}", "amber"),
+        card("High Conf. Accuracy", f"{high_rate:.1%}", "green"),
         card("Pending Results", pending, "blue"),
     ]
 
@@ -385,11 +412,13 @@ def _monthly_chart(df: pd.DataFrame):
         text_auto=".0%",
     )
     fig.update_layout(
-        paper_bgcolor="white", plot_bgcolor="#f8fafc",
+        paper_bgcolor="#151515", plot_bgcolor="#101416",
         yaxis_tickformat=".0%", height=300,
         margin=dict(l=60, r=20, t=20, b=40),
         legend_title_text="Confidence",
-        font={"family": "Inter, sans-serif", "size": 12},
+        font={"family": "Manrope, Inter, sans-serif", "size": 12, "color": "#f2f2f2"},
+        xaxis={"gridcolor": "rgba(255,255,255,.06)", "color": "#8e909c"},
+        yaxis={"gridcolor": "rgba(255,255,255,.06)", "color": "#8e909c"},
     )
     fig.update_traces(textposition="outside")
     return fig
@@ -398,7 +427,7 @@ def _monthly_chart(df: pd.DataFrame):
 def _empty_fig(msg: str):
     fig = go.Figure()
     fig.add_annotation(text=msg, xref="paper", yref="paper", x=0.5, y=0.5,
-                       showarrow=False, font={"size": 14, "color": "#94a3b8"})
-    fig.update_layout(height=300, paper_bgcolor="white", plot_bgcolor="#f8fafc",
+                       showarrow=False, font={"size": 14, "color": "#64748b"})
+    fig.update_layout(height=300, paper_bgcolor="#151515", plot_bgcolor="#101416",
                       margin=dict(l=40, r=20, t=20, b=40))
     return fig

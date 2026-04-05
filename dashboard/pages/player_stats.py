@@ -131,7 +131,7 @@ def update_player_page(n_intervals):
 
     if df.empty:
         empty_fig = go.Figure().update_layout(
-            paper_bgcolor="transparent", plot_bgcolor="transparent",
+            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
             xaxis={"visible": False}, yaxis={"visible": False},
             annotations=[{"text": "No resolved predictions yet",
                           "showarrow": False, "font": {"color": "#8e909c", "size": 14}}],
@@ -315,8 +315,8 @@ def _kpi(label: str, value: str, icon: str):
 
 def _chart_layout() -> dict:
     return dict(
-        paper_bgcolor="transparent",
-        plot_bgcolor="transparent",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
         font={"family": "'Inter', sans-serif", "color": "#e2e8f0", "size": 12},
         xaxis={"gridcolor": "rgba(255,255,255,.06)", "showgrid": True},
         yaxis={"gridcolor": "rgba(255,255,255,.06)", "showgrid": False},

@@ -44,31 +44,31 @@ def fetch_results_for_date(game_date: str = None) -> list[dict]:
     for game in completed:
         game_id = game["game_id"]
         try:
-            bs = statsapi.boxscore_data(game_id)
+            data = statsapi.get("game", {"gamePk": game_id})
         except Exception as exc:
-            logger.warning("Boxscore failed for game %s: %s", game_id, exc)
+            logger.warning("Game data failed for game %s: %s", game_id, exc)
             continue
 
+        teams = data.get("liveData", {}).get("boxscore", {}).get("teams", {})
+
         for side in ("away", "home"):
-            batter_list_key = f"{side}Batters"
-            batters = bs.get(batter_list_key, [])
-            team_info = bs.get("teamInfo", {}).get(side, {})
-            team_abbr = _team_abbr(team_info.get("teamName", ""))
+            team_info = teams.get(side, {}).get("team", {})
+            team_abbr = _team_abbr(team_info.get("name", ""))
+            players = teams.get(side, {}).get("players", {})
 
-            for b in batters:
-                # Skip header row
-                if b.get("personId", 0) == 0:
+            for pid, p in players.items():
+                batting = p.get("stats", {}).get("batting", {})
+                # Only include players who batted (have atBats or plateAppearances)
+                if not batting:
                     continue
-                name = b.get("name", "").strip()
-                # hr field is a string from the API ('0', '1', '2', etc.)
-                raw_hr = b.get("hr", "0")
-                try:
-                    hr = int(raw_hr)
-                except (ValueError, TypeError):
-                    hr = 0
+                at_bats = batting.get("atBats", 0) or 0
+                plate_app = batting.get("plateAppearances", 0) or 0
+                if at_bats == 0 and plate_app == 0:
+                    continue
 
-                # Normalize name: "Judge, Aar" → "Aaron Judge" style matching
-                full_name = _normalize_name(name)
+                full_name = p.get("person", {}).get("fullName", "").strip()
+                hr = int(batting.get("homeRuns", 0) or 0)
+                person_id = p.get("person", {}).get("id")
 
                 results.append({
                     "player":      full_name,
@@ -76,7 +76,7 @@ def fetch_results_for_date(game_date: str = None) -> list[dict]:
                     "actual_hrs":  hr,
                     "game_id":     game_id,
                     "team":        team_abbr,
-                    "person_id":   b.get("personId"),
+                    "person_id":   person_id,
                 })
 
     logger.info("Fetched results for %d batters (date: %s)", len(results), game_date)
