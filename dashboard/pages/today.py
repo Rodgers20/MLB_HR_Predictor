@@ -6,6 +6,7 @@ Kinetic Analytics design: 3-column top picks, hero spotlight, venue card, full t
 
 from datetime import date
 from pathlib import Path
+from urllib.parse import quote_plus
 
 import pandas as pd
 import plotly.express as px
@@ -327,7 +328,7 @@ def update_table(data, conf_filter, team_filter, wind_filter, sort_by):
     )
 
     df["deep_dive_link"] = df["Player"].apply(
-        lambda p: f"[↗ Stats](/player?name={p})"
+        lambda p: f"[↗ Stats](/player?name={quote_plus(p)})"
     )
     table_data = df[[
         "rank", "Player", "Team", "Opponent", "Pitcher", "HR_Probability",
@@ -410,7 +411,7 @@ def _build_top_picks_grid(df: pd.DataFrame):
                 html.Div([
                     dcc.Link(
                         name,
-                        href=f"/player?name={name}",
+                        href=f"/player?name={quote_plus(name)}",
                         className="top-pick-name",
                         style={"textDecoration": "none", "cursor": "pointer",
                                "color": "inherit", "display": "block"},
@@ -560,7 +561,7 @@ def _build_featured_players(df: pd.DataFrame):
                 html.Div([
                     dcc.Link(
                         name,
-                        href=f"/player?name={name}",
+                        href=f"/player?name={quote_plus(name)}",
                         style={
                             "fontSize": "13px", "fontWeight": "700", "color": "#f1f5f9",
                             "textDecoration": "none", "cursor": "pointer",
