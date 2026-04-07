@@ -118,6 +118,14 @@ def run_results_update():
         except Exception:
             pass
 
+        # Bust FanGraphs cache so player tracker shows today's stats
+        try:
+            from utils.data_fetcher import fetch_fangraphs_batting
+            fetch_fangraphs_batting(date.today().year)
+            logger.info("FanGraphs batting cache refreshed for player tracker.")
+        except Exception as exc:
+            logger.warning("FanGraphs cache refresh failed: %s", exc)
+
     except Exception as exc:
         logger.error("Results update job FAILED: %s", exc, exc_info=True)
 

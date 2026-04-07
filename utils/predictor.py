@@ -234,9 +234,11 @@ def predict_today(game_date: str = None) -> pd.DataFrame:
 
     fg_bat_cur["hr_rate"] = fg_bat_cur["HR"] / fg_bat_cur["PA"].replace(0, np.nan)
 
-    # 3-year weighted batter features
-    batter_weighted  = build_3yr_weighted_fg(fg_batting, current_year)
-    pitcher_weighted = build_3yr_weighted_pitcher(fg_pitching, current_year)
+    # 3-year weighted batter features — use last *completed* season so partial
+    # 2026 data (< 40 PA) doesn't drag down elite hitters like Cal Raleigh.
+    # Bayesian smoothing in build_matchup_features() handles the current year.
+    batter_weighted  = build_3yr_weighted_fg(fg_batting, current_year - 1)
+    pitcher_weighted = build_3yr_weighted_pitcher(fg_pitching, current_year - 1)
 
     games = fetch_todays_games(game_date)
     if not games:

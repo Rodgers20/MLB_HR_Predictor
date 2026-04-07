@@ -33,12 +33,13 @@ ROSTER_YEAR  = CURRENT_YEAR
 # Layout
 # ---------------------------------------------------------------------------
 
-def layout(player_name: str | None = None):
+def layout(player_name: str | None = None, pitcher_name: str | None = None):
     """Render the player deep-dive page.
 
     Args:
-        player_name: When navigating from Today's picks, pre-populate the
-                     dropdown and auto-trigger analysis for this player.
+        player_name:  When navigating from Today's picks, pre-populate the
+                      dropdown and auto-trigger analysis for this player.
+        pitcher_name: Today's opposing pitcher — used to show H2H career stats.
     """
     return html.Div([
         html.Div([
@@ -58,8 +59,9 @@ def layout(player_name: str | None = None):
             html.Button("Analyze", id="analyze-btn", className="btn-primary"),
         ], className="filters-row"),
 
-        # Store triggers auto-analysis when a player is pre-selected via URL
-        dcc.Store(id="player-autoload", data=player_name),
+        # Stores trigger auto-analysis when navigating from Today's picks
+        dcc.Store(id="player-autoload",  data=player_name),
+        dcc.Store(id="pitcher-autoload", data=pitcher_name),
 
         dcc.Loading(
             html.Div(id="player-content"),
@@ -95,9 +97,10 @@ def load_player_list(_n):
     Input("analyze-btn", "n_clicks"),
     Input("player-autoload", "data"),
     State("player-search-dropdown", "value"),
+    State("pitcher-autoload", "data"),
     prevent_initial_call=True,
 )
-def show_player(_n_clicks, autoload_name, player_name):
+def show_player(_n_clicks, autoload_name, player_name, pitcher_name):
     # autoload_name is set when navigating from Today's picks; prefer it over
     # the dropdown state so the analysis fires immediately on page load.
     player_name = autoload_name or player_name
@@ -161,8 +164,40 @@ def show_player(_n_clicks, autoload_name, player_name):
         ]),
     ], className="player-profile")
 
+    # ── H2H callout (only when navigating from Today's picks) ─────────────
+    h2h_card = html.Div()
+    if pitcher_name:
+        try:
+            from utils.ab_log_fetcher import (
+                compute_h2h, fetch_player_ab_log, format_h2h_line,
+            )
+            ab_log_full = fetch_player_ab_log(player_name, CURRENT_YEAR)
+            h2h  = compute_h2h(ab_log_full, pitcher_name)
+            line = format_h2h_line(pitcher_name, h2h)
+        except Exception:
+            line = f"vs {pitcher_name}: career data unavailable"
+
+        h2h_card = html.Div([
+            html.Span("Today's Matchup", style={
+                "fontSize": "10px", "fontWeight": "700", "letterSpacing": "1px",
+                "textTransform": "uppercase", "color": "#ff6b00", "marginBottom": "4px",
+                "display": "block",
+            }),
+            html.Span(line, style={
+                "fontFamily": "'Manrope', sans-serif", "fontSize": "14px",
+                "fontWeight": "700", "color": "#f0f4f8",
+            }),
+        ], style={
+            "background": "rgba(255,107,0,.08)",
+            "border": "1px solid rgba(255,107,0,.25)",
+            "borderRadius": "10px",
+            "padding": "14px 18px",
+            "marginBottom": "16px",
+        })
+
     return html.Div([
         profile,
+        h2h_card,
         _current_season_banner(player_name),
         html.Div(_stat_cards(player_row), className="summary-cards"),
         _ab_log_section(player_name),
@@ -303,13 +338,13 @@ def _ab_log_section(player_name: str):
                 html.P("Result Breakdown", style=_subtitle_style()),
                 dcc.Graph(figure=_result_donut(ab_log),
                           config={"displayModeBar": False},
-                          style={"height": "300px"}),
+                          style={"height": "360px"}),
             ], style={"flex": "0 0 38%"}),
             html.Div([
                 html.P("Exit Velocity vs Launch Angle", style=_subtitle_style()),
                 dcc.Graph(figure=_ev_la_scatter(ab_log),
                           config={"displayModeBar": False},
-                          style={"height": "300px"}),
+                          style={"height": "360px"}),
             ], style={"flex": "1"}),
         ], style={"display": "flex", "gap": "16px", "marginBottom": "16px"}),
 
@@ -318,7 +353,7 @@ def _ab_log_section(player_name: str):
             html.P("Season Progress", style=_subtitle_style()),
             dcc.Graph(figure=_cumulative_chart(ab_log),
                       config={"displayModeBar": False},
-                      style={"height": "240px"}),
+                      style={"height": "300px"}),
         ], style={"marginBottom": "16px"}),
 
         # ── Row 3: PA table ────────────────────────────────────────────────
@@ -459,7 +494,7 @@ def _ev_la_scatter(ab_log: pd.DataFrame):
             "color": "#8e909c", "range": [-40, 60],
         },
         legend={
-            "orientation": "h", "y": -0.25, "x": 0,
+            "orientation": "h", "y": -0.20, "x": 0,
             "font": {"color": "#8e909c", "size": 10},
         },
         font={"family": "Manrope, sans-serif", "color": "#f2f2f2"},
@@ -523,9 +558,10 @@ def _cumulative_chart(ab_log: pd.DataFrame):
                "gridcolor": "rgba(255,255,255,.05)"},
         yaxis2={"title": "Rolling AVG", "overlaying": "y", "side": "right",
                 "tickformat": ".3f", "color": "#8e909c", "range": [0, 1]},
-        legend={"orientation": "h", "y": -0.3, "x": 0,
+        legend={"orientation": "h", "y": -0.25, "x": 0,
                 "font": {"color": "#8e909c", "size": 10}},
         font={"family": "Manrope, sans-serif", "color": "#f2f2f2"},
+        margin=dict(l=55, r=65, t=20, b=70),
     )
     return fig
 
@@ -721,7 +757,7 @@ def _trend_chart(player_name: str):
     ))
     fig.update_layout(
         paper_bgcolor="#151515", plot_bgcolor="#101416",
-        height=280, margin=dict(l=40, r=20, t=20, b=40),
+        height=360, margin=dict(l=50, r=20, t=50, b=50),
         font={"family": "Manrope, Inter, sans-serif", "size": 12, "color": "#f2f2f2"},
         yaxis={"title": "Home Runs", "gridcolor": "rgba(255,255,255,.06)",
                "color": "#8e909c", "dtick": 5},
@@ -771,14 +807,14 @@ def _park_factor_chart(player: pd.Series):
     fig.add_hline(y=0, line_color="rgba(255,255,255,.2)", line_width=1)
     fig.update_layout(
         paper_bgcolor="#151515", plot_bgcolor="#101416",
-        height=280, margin=dict(l=40, r=20, t=10, b=50),
+        height=400, margin=dict(l=60, r=20, t=40, b=90),
         font={"family": "Manrope, Inter, sans-serif", "size": 12, "color": "#f2f2f2"},
         yaxis={
             "title": "% vs League Average",
             "gridcolor": "rgba(255,255,255,.06)", "color": "#8e909c",
             "ticksuffix": "%",
         },
-        xaxis={"color": "#8e909c", "tickangle": -30},
+        xaxis={"color": "#8e909c", "tickangle": -35},
         showlegend=False,
         annotations=[{
             "x": 0.5, "y": 1.02, "xref": "paper", "yref": "paper",

@@ -327,8 +327,9 @@ def update_table(data, conf_filter, team_filter, wind_filter, sort_by):
         {True: "Home", False: "Away", 1: "Home", 0: "Away"}
     )
 
-    df["deep_dive_link"] = df["Player"].apply(
-        lambda p: f"[↗ Stats](/player?name={quote_plus(p)})"
+    df["deep_dive_link"] = df.apply(
+        lambda r: f"[↗ Stats](/player?name={quote_plus(str(r['Player']))}&pitcher={quote_plus(str(r.get('Pitcher', '')))})",
+        axis=1,
     )
     table_data = df[[
         "rank", "Player", "Team", "Opponent", "Pitcher", "HR_Probability",
@@ -411,7 +412,7 @@ def _build_top_picks_grid(df: pd.DataFrame):
                 html.Div([
                     dcc.Link(
                         name,
-                        href=f"/player?name={quote_plus(name)}",
+                        href=f"/player?name={quote_plus(name)}&pitcher={quote_plus(pitcher)}",
                         className="top-pick-name",
                         style={"textDecoration": "none", "cursor": "pointer",
                                "color": "inherit", "display": "block"},
@@ -522,6 +523,7 @@ def _build_featured_players(df: pd.DataFrame):
         name    = str(row.get("Player", ""))
         team    = str(row.get("Team", ""))
         opp     = str(row.get("Opponent", "") or "")
+        pitcher = str(row.get("Pitcher", "") or "")
         conf    = str(row.get("Confidence", "") or "")
         insight = str(row.get("Insight_Text", "") or "")
         photo   = photo_map.get(name, "")
@@ -561,7 +563,7 @@ def _build_featured_players(df: pd.DataFrame):
                 html.Div([
                     dcc.Link(
                         name,
-                        href=f"/player?name={quote_plus(name)}",
+                        href=f"/player?name={quote_plus(name)}&pitcher={quote_plus(pitcher)}",
                         style={
                             "fontSize": "13px", "fontWeight": "700", "color": "#f1f5f9",
                             "textDecoration": "none", "cursor": "pointer",

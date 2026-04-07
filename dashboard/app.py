@@ -218,15 +218,14 @@ app.layout = html.Div([
 )
 def render_page(pathname, search):
     if pathname == "/player":
-        # Parse ?name=Kyle+Schwarber from the URL query string
-        player_name = None
+        player_name  = None
+        pitcher_name = None
         if search:
-            from urllib.parse import parse_qs, urlparse
+            from urllib.parse import parse_qs
             params = parse_qs(search.lstrip("?"))
-            names = params.get("name", [])
-            if names:
-                player_name = names[0]
-        return player.layout(player_name=player_name)
+            player_name  = params.get("name",    [None])[0]
+            pitcher_name = params.get("pitcher", [None])[0]
+        return player.layout(player_name=player_name, pitcher_name=pitcher_name)
     elif pathname == "/performance":
         return model_perf.layout()
     elif pathname == "/player-stats":

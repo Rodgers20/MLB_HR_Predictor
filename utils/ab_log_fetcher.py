@@ -368,3 +368,43 @@ def get_season_stats(ab_log: pd.DataFrame) -> dict:
         "avg_la":       avg_la,
         "hard_hit_pct": hard_hit,
     }
+
+
+# ---------------------------------------------------------------------------
+# Batter vs Pitcher head-to-head (H2H)
+# ---------------------------------------------------------------------------
+
+def compute_h2h(ab_log: pd.DataFrame, pitcher_name: str) -> dict:
+    """Filter ab_log by pitcher last name and compute career H2H stats."""
+    if ab_log.empty or "pitcher_name" not in ab_log.columns or not pitcher_name:
+        return {}
+
+    last_name = pitcher_name.strip().split()[-1]
+    mask = ab_log["pitcher_name"].str.contains(last_name, case=False, na=False)
+    vs = ab_log[mask]
+    if vs.empty:
+        return {}
+
+    pa  = len(vs)
+    ab  = int(vs["events"].isin(AB_EVENTS).sum())
+    h   = int(vs["events"].isin(HIT_EVENTS).sum())
+    hr  = int((vs["events"] == "home_run").sum())
+    k   = int(vs["events"].isin({"strikeout", "strikeout_double_play"}).sum())
+    bb  = int(vs["events"].isin({"walk", "intent_walk"}).sum())
+    avg = f".{round(h / ab * 1000):03d}" if ab > 0 else ".000"
+
+    return {"pa": pa, "ab": ab, "hits": h, "hr": hr, "k": k, "bb": bb, "avg": avg}
+
+
+def format_h2h_line(pitcher_name: str, h2h: dict) -> str:
+    """Return a compact H2H summary, e.g. 'vs Jacob deGrom: 0/8, 4 K, 0 HR (career)'"""
+    if not h2h or h2h.get("pa", 0) == 0:
+        return f"No career data vs {pitcher_name}"
+    ab, h, hr, k, bb = h2h["ab"], h2h["hits"], h2h["hr"], h2h["k"], h2h["bb"]
+    parts = [f"{h}/{ab}"]
+    if k:
+        parts.append(f"{k} K")
+    if bb:
+        parts.append(f"{bb} BB")
+    parts.append(f"{hr} HR")
+    return f"vs {pitcher_name}: {', '.join(parts)} (career)"
