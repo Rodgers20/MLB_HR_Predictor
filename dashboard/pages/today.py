@@ -832,85 +832,162 @@ def _empty_venue():
 # ─── Daily 3-leg parlay ───────────────────────────────────────────────────────
 
 def _build_parlay_card(df: pd.DataFrame):
+    """Build the full parlays section: 5 three-leg + 5 two-leg parlays."""
     if df.empty:
         return []
 
-    high = df[df["Confidence"] == "High"]
-    pool = high if len(high) >= 3 else df
-    legs = pool.sort_values("HR_Probability", ascending=False).head(3)
+    import itertools
+    import math
 
-    if len(legs) < 2:
+    pool = df.sort_values("HR_Probability", ascending=False).head(12)
+    if len(pool) < 2:
         return []
 
-    import math
-    combined = math.prod(float(r["HR_Probability"]) for _, r in legs.iterrows())
+    rows = [row for _, row in pool.iterrows()]
 
-    leg_items = []
-    for i, (_, row) in enumerate(legs.iterrows(), 1):
-        name  = str(row.get("Player", ""))
-        team  = str(row.get("Team", ""))
-        opp   = str(row.get("Opponent", ""))
-        prob  = float(row.get("HR_Probability", 0))
-        conf  = str(row.get("Confidence", ""))
-        badge_color = "#22c55e" if conf == "High" else "#ff6b00"
+    def _combined_prob(legs):
+        return math.prod(float(r["HR_Probability"]) for r in legs)
 
-        leg_items.append(html.Div([
-            html.Div(str(i), style={
-                "width": "22px", "height": "22px", "borderRadius": "50%",
-                "background": "rgba(255,107,0,.15)", "border": "1px solid #ff6b00",
-                "color": "#ff6b00", "fontSize": "11px", "fontWeight": "700",
-                "display": "flex", "alignItems": "center", "justifyContent": "center",
-                "flexShrink": "0",
+    def _parlay_mini_card(legs, parlay_num: int, accent: str):
+        combined = _combined_prob(legs)
+        leg_items = []
+        for i, row in enumerate(legs, 1):
+            name = str(row.get("Player", ""))
+            team = str(row.get("Team", ""))
+            opp  = str(row.get("Opponent", ""))
+            prob = float(row.get("HR_Probability", 0))
+            conf = str(row.get("Confidence", ""))
+            badge_color = "#22c55e" if conf == "High" else "#ff6b00"
+            leg_items.append(html.Div([
+                html.Div(str(i), style={
+                    "width": "18px", "height": "18px", "borderRadius": "50%",
+                    "background": "rgba(255,107,0,.12)",
+                    "border": f"1px solid {accent}",
+                    "color": accent, "fontSize": "10px", "fontWeight": "700",
+                    "display": "flex", "alignItems": "center", "justifyContent": "center",
+                    "flexShrink": "0",
+                }),
+                html.Div([
+                    html.Span(name, style={"fontSize": "12px", "fontWeight": "600", "color": "#f0dfd8"}),
+                    html.Span(f" {team} vs {opp}", style={
+                        "fontSize": "10px", "color": "var(--on-surface-variant)", "marginLeft": "4px",
+                    }),
+                ], style={"flex": "1", "minWidth": "0", "overflow": "hidden"}),
+                html.Div([
+                    html.Span(f"{prob:.1%}", style={"fontSize": "11px", "fontWeight": "700", "color": accent}),
+                    html.Span(conf, style={
+                        "fontSize": "9px", "color": badge_color,
+                        "marginLeft": "5px", "border": f"1px solid {badge_color}",
+                        "borderRadius": "3px", "padding": "1px 4px",
+                    }),
+                ], style={"display": "flex", "alignItems": "center", "flexShrink": "0"}),
+            ], style={
+                "display": "flex", "alignItems": "center", "gap": "8px",
+                "padding": "5px 0", "borderBottom": "1px solid rgba(255,255,255,.04)",
+            }))
+
+        return html.Div([
+            html.Div([
+                html.Span(f"Parlay {parlay_num}", style={
+                    "fontSize": "10px", "fontWeight": "800", "color": accent,
+                    "textTransform": "uppercase", "letterSpacing": "1px",
+                }),
+                html.Div([
+                    html.Span("Combined: ", style={"fontSize": "10px", "color": "var(--on-surface-variant)"}),
+                    html.Span(f"{combined:.2%}", style={"fontSize": "13px", "fontWeight": "800", "color": accent}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "4px"}),
+            ], style={
+                "display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                "marginBottom": "6px",
             }),
-            html.Div([
-                html.Span(name, style={
-                    "fontSize": "13px", "fontWeight": "600", "color": "#f0dfd8",
-                }),
-                html.Span(f"  {team} vs {opp}", style={
-                    "fontSize": "11px", "color": "var(--on-surface-variant)",
-                    "marginLeft": "6px",
-                }),
-            ], style={"flex": "1"}),
-            html.Div([
-                html.Span(f"{prob:.1%}", style={
-                    "fontSize": "13px", "fontWeight": "700", "color": "#ff6b00",
-                }),
-                html.Span(conf, style={
-                    "fontSize": "10px", "color": badge_color,
-                    "marginLeft": "8px", "border": f"1px solid {badge_color}",
-                    "borderRadius": "4px", "padding": "1px 5px",
-                }),
-            ], style={"display": "flex", "alignItems": "center"}),
+            html.Div(leg_items),
         ], style={
-            "display": "flex", "alignItems": "center", "gap": "10px",
-            "padding": "10px 0",
-        }))
+            "background": "var(--surface-container)",
+            "border": f"1px solid {accent}33",
+            "borderRadius": "10px", "padding": "12px 14px",
+        })
+
+    # ── 3-leg parlays ──────────────────────────────────────────────────────────
+    three_leg_section: list = []
+    if len(rows) >= 3:
+        three_combos = sorted(
+            itertools.combinations(rows, 3),
+            key=_combined_prob,
+            reverse=True,
+        )[:5]
+        three_cards = [
+            _parlay_mini_card(list(legs), i + 1, "#ff6b00")
+            for i, legs in enumerate(three_combos)
+        ]
+        three_leg_section = [
+            html.Div([
+                html.H4("3-Leg HR Parlays", style={
+                    "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
+                    "color": "#ff6b00",
+                }),
+                html.P("Top 5 three-player HR combos by combined probability",
+                       style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"}),
+            ], style={"marginBottom": "14px"}),
+            html.Div(three_cards, style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
+                "gap": "12px",
+            }),
+        ]
+
+    # ── 2-leg parlays ──────────────────────────────────────────────────────────
+    two_leg_section: list = []
+    if len(rows) >= 2:
+        two_combos = sorted(
+            itertools.combinations(rows, 2),
+            key=_combined_prob,
+            reverse=True,
+        )[:5]
+        two_cards = [
+            _parlay_mini_card(list(legs), i + 1, "#22c55e")
+            for i, legs in enumerate(two_combos)
+        ]
+        two_leg_section = [
+            html.Div([
+                html.H4("2-Leg HR Parlays", style={
+                    "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
+                    "color": "#22c55e",
+                }),
+                html.P("Top 5 two-player HR combos by combined probability",
+                       style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"}),
+            ], style={"marginBottom": "14px"}),
+            html.Div(two_cards, style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
+                "gap": "12px",
+            }),
+        ]
+
+    if not three_leg_section and not two_leg_section:
+        return []
 
     return html.Div([
+        # Section header
         html.Div([
             html.Div([
-                html.H4("Model's 3-Leg HR Parlay", style={
+                html.H4("Today's HR Parlays", style={
                     "margin": 0, "fontSize": "15px", "fontWeight": "800",
                 }),
+                html.P("Model-generated parlay suggestions — ranked by combined HR probability",
+                       style={"margin": "2px 0 0", "fontSize": "12px",
+                              "color": "var(--on-surface-variant)"}),
             ]),
-            html.Div([
-                html.Span("Combined probability: ", style={
-                    "fontSize": "12px", "color": "var(--on-surface-variant)",
-                }),
-                html.Span(f"{combined:.2%}", style={
-                    "fontSize": "14px", "fontWeight": "800", "color": "#ff6b00",
-                }),
-            ]),
-        ], className="table-title-bar", style={"justifyContent": "space-between"}),
+        ], className="table-title-bar"),
 
-        html.Div(leg_items, style={"padding": "4px 16px 8px"}),
+        html.Div([
+            *three_leg_section,
+            html.Div(style={"height": "20px"}) if three_leg_section and two_leg_section else None,
+            *two_leg_section,
+        ], style={"padding": "16px"}),
 
         html.Div(
             "Probabilities are independent estimates. For entertainment only.",
-            style={
-                "fontSize": "10px", "color": "rgba(255,255,255,.2)",
-                "padding": "8px 16px",
-            },
+            style={"fontSize": "10px", "color": "rgba(255,255,255,.2)", "padding": "8px 16px"},
         ),
     ], className="table-container", style={
         "border": "1px solid rgba(255,107,0,.2)",

@@ -552,7 +552,7 @@ def _cumulative_chart(ab_log: pd.DataFrame):
     ))
     fig.update_layout(
         paper_bgcolor="#131618", plot_bgcolor="#101416",
-        margin=dict(l=50, r=60, t=20, b=50),
+        margin=dict(l=55, r=65, t=20, b=70),
         xaxis={"color": "#8e909c", "gridcolor": "rgba(255,255,255,.05)"},
         yaxis={"title": "Cumulative HR", "color": "#8e909c",
                "gridcolor": "rgba(255,255,255,.05)"},
@@ -561,7 +561,6 @@ def _cumulative_chart(ab_log: pd.DataFrame):
         legend={"orientation": "h", "y": -0.25, "x": 0,
                 "font": {"color": "#8e909c", "size": 10}},
         font={"family": "Manrope, sans-serif", "color": "#f2f2f2"},
-        margin=dict(l=55, r=65, t=20, b=70),
     )
     return fig
 

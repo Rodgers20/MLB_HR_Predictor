@@ -84,27 +84,62 @@ def fetch_statcast_pitcher_leaderboard(year: int) -> pd.DataFrame:
 # FanGraphs season batting / pitching stats
 # ---------------------------------------------------------------------------
 
-def _invalidate_if_stale(path: Path, year: int) -> None:
-    """Delete a cached file if it's for the current season and older than today."""
-    from datetime import date as _date
-    from datetime import datetime as _dt
-    if year == _date.today().year and path.exists():
+def _fetch_current_season_with_fallback(
+    path: Path, year: int, fetch_fn, *args, **kwargs
+) -> pd.DataFrame:
+    """Fetch fresh data for the current season; fall back to stale cache on error.
+
+    Unlike the old _invalidate_if_stale approach, the cached file is NOT deleted
+    before the fetch attempt.  This means a 403 / network error keeps the last
+    good data alive rather than leaving the system with nothing.
+    """
+    from datetime import date as _date, datetime as _dt
+
+    # Non-current seasons: use the simple cache — they never change.
+    if year != _date.today().year:
+        return _load_or_fetch(path, fetch_fn, *args, **kwargs)
+
+    # Current season: re-fetch if the cached file is from a previous day.
+    if path.exists():
         file_date = _dt.fromtimestamp(path.stat().st_mtime).date()
-        if file_date < _date.today():
-            logger.info("Stale current-season cache — refreshing %s", path.name)
-            path.unlink()
+        if file_date >= _date.today():
+            logger.info("Cache hit: %s", path)
+            return pd.read_csv(path)
+        logger.info("Stale current-season cache — refreshing %s", path.name)
+    else:
+        logger.info("Cache miss — fetching %s", path.name)
+
+    # Attempt live fetch without deleting the old file first.
+    try:
+        df = fetch_fn(*args, **kwargs)
+        if df is not None and not df.empty:
+            df.to_csv(path, index=False)
+            logger.info("Saved %d rows → %s", len(df), path)
+            df["season"] = year
+            return df
+        logger.warning("Empty response fetching %s", path.name)
+    except Exception as exc:
+        logger.warning("Fetch failed for %s: %s — keeping stale cache", path.name, exc)
+
+    # Fall back to whatever is on disk (may be stale; still better than nothing).
+    if path.exists():
+        logger.warning("Using stale cache for %s", path.name)
+        df = pd.read_csv(path)
+        df["season"] = year
+        return df
+
+    return pd.DataFrame()
 
 
 def fetch_fangraphs_batting(year: int) -> pd.DataFrame:
     """
     FanGraphs season batting stats including ISO, Pull%, FB%, HR/FB, wRC+, WAR.
     Uses qual=0 to get all players (not just qualified).
-    Current-season cache is invalidated daily so stats stay up to date.
+    Current-season cache is refreshed daily; stale data is kept on fetch failure.
     """
     path = RAW_DIR / f"fangraphs_batting_{year}.csv"
-    _invalidate_if_stale(path, year)
-    df = _load_or_fetch(path, batting_stats, year, year, qual=0)
-    if df is not None:
+    df = _fetch_current_season_with_fallback(path, year, batting_stats, year, year, qual=0)
+    if df is not None and "season" not in df.columns:
         df["season"] = year
     return df
 
@@ -112,12 +147,11 @@ def fetch_fangraphs_batting(year: int) -> pd.DataFrame:
 def fetch_fangraphs_pitching(year: int) -> pd.DataFrame:
     """
     FanGraphs season pitching stats including FIP, xFIP, GB%, HR/9, HR/FB.
-    Current-season cache is invalidated daily so stats stay up to date.
+    Current-season cache is refreshed daily; stale data is kept on fetch failure.
     """
     path = RAW_DIR / f"fangraphs_pitching_{year}.csv"
-    _invalidate_if_stale(path, year)
-    df = _load_or_fetch(path, pitching_stats, year, year, qual=0)
-    if df is not None:
+    df = _fetch_current_season_with_fallback(path, year, pitching_stats, year, year, qual=0)
+    if df is not None and "season" not in df.columns:
         df["season"] = year
     return df
 

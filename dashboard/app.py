@@ -26,7 +26,26 @@ SEASON_YEAR = 2026
 
 
 def _load_hr_leaderboard() -> list[tuple[str, int]]:
-    """Return list of (player, season_hr_count) sorted desc, only players with ≥1 HR."""
+    """Return list of (player, season_hr_count) sorted desc, only players with ≥1 HR.
+
+    Source: FanGraphs season batting stats (fetched daily, authoritative HR totals).
+    Falls back to Excel tracker if FanGraphs CSV is unavailable.
+    """
+    fg_path = Path("data/raw/fangraphs_batting_2026.csv")
+    if fg_path.exists():
+        try:
+            df = pd.read_csv(fg_path, usecols=["Name", "Team", "HR"])
+            df["HR"] = pd.to_numeric(df["HR"], errors="coerce").fillna(0).astype(int)
+            leaders = (
+                df[df["HR"] > 0]
+                .sort_values("HR", ascending=False)
+                .drop_duplicates(subset=["Name"])
+            )
+            return list(zip(leaders["Name"], leaders["HR"]))
+        except Exception:
+            pass  # fall through to Excel fallback
+
+    # Fallback: read from Excel Predictions sheet
     if not EXCEL_PATH.exists():
         return []
     try:
@@ -52,8 +71,6 @@ def _load_hr_leaderboard() -> list[tuple[str, int]]:
     season = df[(df["Date"].dt.year == SEASON_YEAR) & (df["Actual_HRs"] > 0)]
     if season.empty:
         return []
-    # Deduplicate: multiple prediction rows can share the same player+date (same game).
-    # Keep the highest Actual_HRs per player per game-day to avoid double-counting.
     season = (
         season
         .sort_values("Actual_HRs", ascending=False)

@@ -130,19 +130,76 @@ def run_results_update():
         logger.error("Results update job FAILED: %s", exc, exc_info=True)
 
 
+def run_weekly_retrain():
+    """Sunday night job: retrain XGBoost on 2017–current season data.
+
+    Runs after the nightly results update so the most recent game outcomes
+    are already in the cache before training begins.
+    """
+    current_year = date.today().year
+    logger.info("=" * 60)
+    logger.info("WEEKLY RETRAIN — using data 2017–%d", current_year)
+    logger.info("=" * 60)
+    try:
+        from utils.data_fetcher import fetch_all_years, load_park_factors
+        from utils.model_trainer import build_training_data, train, save_model
+        from tracker.prediction_tracker import update_feature_importance
+
+        logger.info("Loading multi-year data ...")
+        data         = fetch_all_years(2017, current_year)
+        park_factors = load_park_factors()
+
+        fg_batting  = data["fg_batting"]
+        fg_pitching = data["fg_pitching"]
+
+        if fg_batting.empty:
+            logger.error("Retrain aborted — no batting data available")
+            return
+
+        logger.info("Building training dataset ...")
+        X, y = build_training_data(fg_batting, fg_pitching, park_factors,
+                                   current_year=current_year)
+        logger.info("Training set: %d rows, HR rate=%.4f", len(X), y.mean())
+
+        logger.info("Training model ...")
+        model, scaler, importance, auc_scores = train(X, y)
+        save_model(model, scaler, importance)
+
+        if auc_scores:
+            logger.info("Retrain complete — mean CV AUC: %.4f", sum(auc_scores) / len(auc_scores))
+        else:
+            logger.info("Retrain complete.")
+
+        # Persist updated feature importance to Excel
+        try:
+            update_feature_importance(importance)
+            logger.info("Feature importance updated in Excel.")
+        except Exception as exc:
+            logger.warning("Feature importance Excel update failed: %s", exc)
+
+    except Exception as exc:
+        logger.error("Weekly retrain FAILED: %s", exc, exc_info=True)
+
+    except Exception as exc:
+        logger.error("Results update job FAILED: %s", exc, exc_info=True)
+
+
 # ── Schedule ───────────────────────────────────────────────────────────────────
 
 def setup_schedule():
     PREDICT_TIME = os.getenv("PREDICT_TIME", "09:00")   # 9 AM
     RESULTS_TIME = os.getenv("RESULTS_TIME", "23:30")   # 11:30 PM
+    RETRAIN_TIME = os.getenv("RETRAIN_TIME", "00:30")   # 12:30 AM Sunday → after results
 
     schedule.every().day.at(PREDICT_TIME).do(run_predictions)
     schedule.every().day.at(RESULTS_TIME).do(run_results_update)
+    schedule.every().sunday.at(RETRAIN_TIME).do(run_weekly_retrain)
 
     logger.info("Scheduler started.")
     logger.info("  Predictions job : %s ET daily", PREDICT_TIME)
     logger.info("  Results job     : %s ET daily", RESULTS_TIME)
-    logger.info("  Override times via .env: PREDICT_TIME, RESULTS_TIME")
+    logger.info("  Weekly retrain  : Sunday %s ET", RETRAIN_TIME)
+    logger.info("  Override times via .env: PREDICT_TIME, RESULTS_TIME, RETRAIN_TIME")
     logger.info("  Logs → logs/scheduler.log")
     logger.info("Press Ctrl+C to stop.\n")
 
@@ -155,8 +212,10 @@ def run_now(job: str):
         run_predictions()
     elif job == "results":
         run_results_update()
+    elif job == "retrain":
+        run_weekly_retrain()
     else:
-        logger.error("Unknown job: %s  (use 'predictions' or 'results')", job)
+        logger.error("Unknown job: %s  (use 'predictions', 'results', or 'retrain')", job)
 
 
 # ── Entry point ────────────────────────────────────────────────────────────────
@@ -167,7 +226,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MLB HR Predictor scheduler")
     parser.add_argument(
         "--run-now",
-        choices=["predictions", "results"],
+        choices=["predictions", "results", "retrain"],
         help="Run a job immediately instead of scheduling",
     )
     args = parser.parse_args()
