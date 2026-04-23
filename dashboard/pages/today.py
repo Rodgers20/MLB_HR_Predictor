@@ -478,6 +478,8 @@ def _lookup_batting_stats(player_name: str) -> dict:
         from utils.data_fetcher import fetch_fangraphs_batting
 
         def _find_player(fg) -> object:
+            if fg is None or fg.empty or "Name" not in fg.columns:
+                return pd.DataFrame()
             parts = player_name.split()
             if len(parts) >= 2:
                 return fg[
@@ -829,17 +831,30 @@ def _empty_venue():
     ], className="venue-card")
 
 
-# ─── Daily 3-leg parlay ───────────────────────────────────────────────────────
+# ─── Daily HR parlays ─────────────────────────────────────────────────────────
 
 def _build_parlay_card(df: pd.DataFrame):
-    """Build the full parlays section: 5 three-leg + 5 two-leg parlays."""
+    """Build 3 sections of HR parlays (15 total):
+
+    1. Best-Bet 2-Leg Parlays (green, 5 cards):
+       Each leg = 1 player hitting HR. Players from any game. Both legs must hit.
+       No player repeats across the 5 cards.
+
+    2. 3-Leg HR Parlays (orange, 5 cards):
+       Each leg = 1 player hitting HR. All 3 must hit. No player repeats.
+
+    3. Game-Combo 2-Leg Parlays (blue, 5 cards):
+       Each leg = 2 players from the SAME game combining for 1+ HR (either hits).
+       Parlay wins if BOTH legs hit. No player repeats across the 5 cards.
+    """
     if df.empty:
         return []
 
     import itertools
     import math
+    from collections import defaultdict
 
-    pool = df.sort_values("HR_Probability", ascending=False).head(12)
+    pool = df.sort_values("HR_Probability", ascending=False).head(40)
     if len(pool) < 2:
         return []
 
@@ -848,8 +863,12 @@ def _build_parlay_card(df: pd.DataFrame):
     def _combined_prob(legs):
         return math.prod(float(r["HR_Probability"]) for r in legs)
 
-    def _parlay_mini_card(legs, parlay_num: int, accent: str):
-        combined = _combined_prob(legs)
+    def _either_prob(p1: float, p2: float) -> float:
+        """P(at least one of two independent events)."""
+        return 1.0 - (1.0 - p1) * (1.0 - p2)
+
+    # ── Shared card builder for single-player-per-leg parlays ─────────────────
+    def _parlay_mini_card(legs, parlay_num: int, accent: str, combined: float, subtitle: str = ""):
         leg_items = []
         for i, row in enumerate(legs, 1):
             name = str(row.get("Player", ""))
@@ -861,7 +880,7 @@ def _build_parlay_card(df: pd.DataFrame):
             leg_items.append(html.Div([
                 html.Div(str(i), style={
                     "width": "18px", "height": "18px", "borderRadius": "50%",
-                    "background": "rgba(255,107,0,.12)",
+                    "background": f"{accent}22",
                     "border": f"1px solid {accent}",
                     "color": accent, "fontSize": "10px", "fontWeight": "700",
                     "display": "flex", "alignItems": "center", "justifyContent": "center",
@@ -888,10 +907,15 @@ def _build_parlay_card(df: pd.DataFrame):
 
         return html.Div([
             html.Div([
-                html.Span(f"Parlay {parlay_num}", style={
-                    "fontSize": "10px", "fontWeight": "800", "color": accent,
-                    "textTransform": "uppercase", "letterSpacing": "1px",
-                }),
+                html.Div([
+                    html.Span(f"Parlay {parlay_num}", style={
+                        "fontSize": "10px", "fontWeight": "800", "color": accent,
+                        "textTransform": "uppercase", "letterSpacing": "1px",
+                    }),
+                    html.Span(subtitle, style={
+                        "fontSize": "9px", "color": "var(--on-surface-variant)", "marginLeft": "6px",
+                    }) if subtitle else None,
+                ], style={"display": "flex", "alignItems": "center"}),
                 html.Div([
                     html.Span("Combined: ", style={"fontSize": "10px", "color": "var(--on-surface-variant)"}),
                     html.Span(f"{combined:.2%}", style={"fontSize": "13px", "fontWeight": "800", "color": accent}),
@@ -907,82 +931,273 @@ def _build_parlay_card(df: pd.DataFrame):
             "borderRadius": "10px", "padding": "12px 14px",
         })
 
-    # ── 3-leg parlays ──────────────────────────────────────────────────────────
-    three_leg_section: list = []
-    if len(rows) >= 3:
-        three_combos = sorted(
-            itertools.combinations(rows, 3),
-            key=_combined_prob,
-            reverse=True,
-        )[:5]
-        three_cards = [
-            _parlay_mini_card(list(legs), i + 1, "#ff6b00")
-            for i, legs in enumerate(three_combos)
-        ]
-        three_leg_section = [
-            html.Div([
-                html.H4("3-Leg HR Parlays", style={
-                    "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
-                    "color": "#ff6b00",
-                }),
-                html.P("Top 5 three-player HR combos by combined probability",
-                       style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"}),
-            ], style={"marginBottom": "14px"}),
-            html.Div(three_cards, style={
-                "display": "grid",
-                "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
-                "gap": "12px",
-            }),
-        ]
+    # ── Card builder for Game-Combo parlays (each leg = 2 same-game players) ──
+    def _combo_parlay_card(legs, parlay_num: int, combined: float):
+        """legs: list of 2 tuples (either_prob, row_a, row_b)"""
+        accent = "#60a5fa"
+        leg_blocks = []
+        for leg_idx, (ep, ra, rb) in enumerate(legs, 1):
+            def _player_row(r, accent=accent):
+                name = str(r.get("Player", ""))
+                team = str(r.get("Team", ""))
+                opp  = str(r.get("Opponent", ""))
+                prob = float(r.get("HR_Probability", 0))
+                conf = str(r.get("Confidence", ""))
+                badge_color = "#22c55e" if conf == "High" else "#ff6b00"
+                return html.Div([
+                    html.Span(name, style={"fontSize": "12px", "fontWeight": "600", "color": "#f0dfd8",
+                                          "flex": "1", "minWidth": "0", "overflow": "hidden"}),
+                    html.Span(f"{team} vs {opp}", style={
+                        "fontSize": "10px", "color": "var(--on-surface-variant)", "marginRight": "6px",
+                    }),
+                    html.Span(f"{prob:.1%}", style={"fontSize": "11px", "fontWeight": "700", "color": accent}),
+                    html.Span(conf, style={
+                        "fontSize": "9px", "color": badge_color,
+                        "marginLeft": "4px", "border": f"1px solid {badge_color}",
+                        "borderRadius": "3px", "padding": "1px 4px",
+                    }),
+                ], style={"display": "flex", "alignItems": "center", "gap": "4px",
+                          "padding": "3px 0"})
 
-    # ── 2-leg parlays ──────────────────────────────────────────────────────────
+            leg_blocks.append(html.Div([
+                html.Div([
+                    html.Span(f"LEG {leg_idx}", style={
+                        "fontSize": "9px", "fontWeight": "800", "color": accent,
+                        "textTransform": "uppercase", "letterSpacing": "1px",
+                    }),
+                    html.Span(f"Either HR: {ep:.1%}", style={
+                        "fontSize": "10px", "fontWeight": "700", "color": accent,
+                        "marginLeft": "auto",
+                    }),
+                ], style={"display": "flex", "alignItems": "center",
+                          "marginBottom": "4px", "paddingBottom": "3px",
+                          "borderBottom": f"1px solid {accent}33"}),
+                _player_row(ra),
+                html.Div("OR", style={
+                    "fontSize": "9px", "fontWeight": "800", "color": "var(--on-surface-variant)",
+                    "textAlign": "center", "padding": "1px 0",
+                }),
+                _player_row(rb),
+            ], style={
+                "background": f"{accent}08",
+                "border": f"1px solid {accent}22",
+                "borderRadius": "8px", "padding": "8px 10px",
+                "marginBottom": "6px" if leg_idx < len(legs) else "0",
+            }))
+
+        return html.Div([
+            html.Div([
+                html.Div([
+                    html.Span(f"Parlay {parlay_num}", style={
+                        "fontSize": "10px", "fontWeight": "800", "color": accent,
+                        "textTransform": "uppercase", "letterSpacing": "1px",
+                    }),
+                    html.Span("Both legs must hit", style={
+                        "fontSize": "9px", "color": "var(--on-surface-variant)", "marginLeft": "6px",
+                    }),
+                ], style={"display": "flex", "alignItems": "center"}),
+                html.Div([
+                    html.Span("Combined: ", style={"fontSize": "10px", "color": "var(--on-surface-variant)"}),
+                    html.Span(f"{combined:.2%}", style={"fontSize": "13px", "fontWeight": "800", "color": accent}),
+                ], style={"display": "flex", "alignItems": "center", "gap": "4px"}),
+            ], style={
+                "display": "flex", "justifyContent": "space-between", "alignItems": "center",
+                "marginBottom": "8px",
+            }),
+            html.Div(leg_blocks),
+        ], style={
+            "background": "var(--surface-container)",
+            "border": f"1px solid {accent}33",
+            "borderRadius": "10px", "padding": "12px 14px",
+        })
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 1 — Best-Bet 2-Leg Parlays
+    # Take top players, pair them greedily, no repeats, both must hit HR.
+    # ══════════════════════════════════════════════════════════════════════════
+    two_leg_parlays: list = []
+    used_2leg: set = set()
+    available = [r for r in rows]
+    for r in available:
+        if str(r.get("Player", "")) in used_2leg:
+            continue
+        # Find the next best unused partner
+        partner = None
+        for r2 in available:
+            n2 = str(r2.get("Player", ""))
+            if n2 != str(r.get("Player", "")) and n2 not in used_2leg:
+                partner = r2
+                break
+        if partner is None:
+            break
+        n1 = str(r.get("Player", ""))
+        n2 = str(partner.get("Player", ""))
+        used_2leg.add(n1)
+        used_2leg.add(n2)
+        combined = float(r["HR_Probability"]) * float(partner["HR_Probability"])
+        two_leg_parlays.append((combined, r, partner))
+        if len(two_leg_parlays) == 5:
+            break
+
     two_leg_section: list = []
-    if len(rows) >= 2:
-        two_combos = sorted(
-            itertools.combinations(rows, 2),
-            key=_combined_prob,
-            reverse=True,
-        )[:5]
-        two_cards = [
-            _parlay_mini_card(list(legs), i + 1, "#22c55e")
-            for i, legs in enumerate(two_combos)
+    if two_leg_parlays:
+        cards = [
+            _parlay_mini_card([p1, p2], i + 1, "#22c55e", combined,
+                              subtitle="Both must HR")
+            for i, (combined, p1, p2) in enumerate(two_leg_parlays)
         ]
         two_leg_section = [
             html.Div([
-                html.H4("2-Leg HR Parlays", style={
+                html.H4("Best-Bet 2-Leg HR Parlays", style={
                     "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
                     "color": "#22c55e",
                 }),
-                html.P("Top 5 two-player HR combos by combined probability",
-                       style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"}),
+                html.P(
+                    "Both players must hit a HR — top picks by HR probability, no player repeats",
+                    style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"},
+                ),
             ], style={"marginBottom": "14px"}),
-            html.Div(two_cards, style={
+            html.Div(cards, style={
                 "display": "grid",
                 "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
                 "gap": "12px",
             }),
         ]
 
-    if not three_leg_section and not two_leg_section:
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 2 — 3-Leg HR Parlays (unchanged logic)
+    # ══════════════════════════════════════════════════════════════════════════
+    three_leg_section: list = []
+    if len(rows) >= 3:
+        used_3leg: set = set()
+        diverse_combos: list = []
+        for combo in sorted(itertools.combinations(rows, 3), key=_combined_prob, reverse=True):
+            names = {str(r.get("Player", "")) for r in combo}
+            if names & used_3leg:
+                continue
+            diverse_combos.append(combo)
+            used_3leg.update(names)
+            if len(diverse_combos) == 5:
+                break
+
+        if diverse_combos:
+            three_cards = [
+                _parlay_mini_card(list(legs), i + 1, "#ff6b00", _combined_prob(legs))
+                for i, legs in enumerate(diverse_combos)
+            ]
+            three_leg_section = [
+                html.Div([
+                    html.H4("3-Leg HR Parlays", style={
+                        "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
+                        "color": "#ff6b00",
+                    }),
+                    html.P(
+                        "All 3 players must hit a HR — no player appears in more than one parlay",
+                        style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"},
+                    ),
+                ], style={"marginBottom": "14px"}),
+                html.Div(three_cards, style={
+                    "display": "grid",
+                    "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
+                    "gap": "12px",
+                }),
+            ]
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # SECTION 3 — Game-Combo 2-Leg Parlays
+    # Each leg = 2 players from the SAME game combining for 1+ HR (either hits).
+    # Parlay wins if BOTH legs hit. No player repeats across the 5 cards.
+    # ══════════════════════════════════════════════════════════════════════════
+
+    # Build all game pairs (top-2 per game by HR probability)
+    game_groups: dict = defaultdict(list)
+    for row in rows:
+        key = frozenset([str(row.get("Team", "")), str(row.get("Opponent", ""))])
+        game_groups[key].append(row)
+
+    game_pairs: list = []  # (either_prob, row_a, row_b)
+    for key, players in game_groups.items():
+        sorted_p = sorted(players, key=lambda r: float(r.get("HR_Probability", 0)), reverse=True)
+        if len(sorted_p) >= 2:
+            ra, rb = sorted_p[0], sorted_p[1]
+            ep = _either_prob(float(ra["HR_Probability"]), float(rb["HR_Probability"]))
+            game_pairs.append((ep, ra, rb))
+
+    # Sort game pairs by either_prob descending
+    game_pairs.sort(key=lambda x: x[0], reverse=True)
+
+    # Greedily combine pairs of game_pairs into 2-leg combo parlays
+    combo_parlays: list = []
+    used_combo: set = set()
+    for i, (ep1, ra1, rb1) in enumerate(game_pairs):
+        n_a1 = str(ra1.get("Player", ""))
+        n_b1 = str(rb1.get("Player", ""))
+        if n_a1 in used_combo or n_b1 in used_combo:
+            continue
+        # Find the next best game pair with no overlapping players
+        for ep2, ra2, rb2 in game_pairs[i + 1:]:
+            n_a2 = str(ra2.get("Player", ""))
+            n_b2 = str(rb2.get("Player", ""))
+            if n_a2 in used_combo or n_b2 in used_combo:
+                continue
+            # No overlap between the two legs
+            if {n_a1, n_b1} & {n_a2, n_b2}:
+                continue
+            combined = ep1 * ep2
+            combo_parlays.append((combined, [(ep1, ra1, rb1), (ep2, ra2, rb2)]))
+            used_combo.update({n_a1, n_b1, n_a2, n_b2})
+            break
+        if len(combo_parlays) == 5:
+            break
+
+    combo_section: list = []
+    if combo_parlays:
+        combo_cards = [
+            _combo_parlay_card(legs, i + 1, combined)
+            for i, (combined, legs) in enumerate(combo_parlays)
+        ]
+        combo_section = [
+            html.Div([
+                html.H4("Game-Combo 2-Leg Parlays", style={
+                    "margin": "0 0 4px", "fontSize": "14px", "fontWeight": "800",
+                    "color": "#60a5fa",
+                }),
+                html.P(
+                    "Each leg = 2 same-game players combining for 1+ HR — both legs must hit",
+                    style={"margin": 0, "fontSize": "11px", "color": "var(--on-surface-variant)"},
+                ),
+            ], style={"marginBottom": "14px"}),
+            html.Div(combo_cards, style={
+                "display": "grid",
+                "gridTemplateColumns": "repeat(auto-fill, minmax(320px, 1fr))",
+                "gap": "12px",
+            }),
+        ]
+
+    if not two_leg_section and not three_leg_section and not combo_section:
         return []
 
+    def _divider():
+        return html.Div(style={"height": "24px"})
+
     return html.Div([
-        # Section header
         html.Div([
             html.Div([
                 html.H4("Today's HR Parlays", style={
                     "margin": 0, "fontSize": "15px", "fontWeight": "800",
                 }),
-                html.P("Model-generated parlay suggestions — ranked by combined HR probability",
+                html.P("15 model-generated parlay suggestions across 3 styles",
                        style={"margin": "2px 0 0", "fontSize": "12px",
                               "color": "var(--on-surface-variant)"}),
             ]),
         ], className="table-title-bar"),
 
         html.Div([
-            *three_leg_section,
-            html.Div(style={"height": "20px"}) if three_leg_section and two_leg_section else None,
             *two_leg_section,
+            _divider() if two_leg_section and three_leg_section else None,
+            *three_leg_section,
+            _divider() if three_leg_section and combo_section else None,
+            *combo_section,
         ], style={"padding": "16px"}),
 
         html.Div(

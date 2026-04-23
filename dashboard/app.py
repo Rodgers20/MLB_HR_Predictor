@@ -19,7 +19,7 @@ from pathlib import Path
 import dash
 from dash import Input, Output, dcc, html
 
-from dashboard.pages import history, model_perf, player, player_stats, today
+from dashboard.pages import history, hits, model_perf, player, player_stats, today
 
 EXCEL_PATH = Path("MLB_HR_Predictions.xlsx")
 SEASON_YEAR = 2026
@@ -97,6 +97,7 @@ server = app.server
 PAGES = [
     {"href": "/",              "label": "Dashboard",         "icon": "grid_view"},
     {"href": "/player",        "label": "Predictions",       "icon": "insights"},
+    {"href": "/hits",          "label": "Hit Predictor",     "icon": "sports_baseball"},
     {"href": "/performance",   "label": "Model Performance", "icon": "emoji_events"},
     {"href": "/player-stats",  "label": "Player Tracker",    "icon": "person_search"},
     {"href": "/history",       "label": "History",           "icon": "history"},
@@ -243,6 +244,8 @@ def render_page(pathname, search):
             player_name  = params.get("name",    [None])[0]
             pitcher_name = params.get("pitcher", [None])[0]
         return player.layout(player_name=player_name, pitcher_name=pitcher_name)
+    elif pathname == "/hits":
+        return hits.layout()
     elif pathname == "/performance":
         return model_perf.layout()
     elif pathname == "/player-stats":
